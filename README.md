@@ -1,4 +1,4 @@
-# Zili — AI workflow + personal assistant
+# Zili — AI workflow + personal assistant 🦑
 
 > Your personal AI in the terminal. Process ideas into BRDs, turn tasks into structured docs with AI context, and chat about anything. Powered by [Claude Code](https://claude.ai/download) — no API key needed.
 
