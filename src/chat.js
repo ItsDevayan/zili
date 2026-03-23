@@ -7,7 +7,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const readline = require('readline');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -74,6 +74,7 @@ You also run a local workflow tool (also called Zili) that processes ideas and t
 ${projectList ? `Here are Devayan's current projects:\n\n${projectList}` : ''}
 
 Keep responses concise unless asked for detail. Use plain text — no markdown formatting since this is a terminal.
+When suggesting shell commands, wrap each command in a code block using triple backticks with "bash" or "sh" language tag so they can be detected and offered for execution.
 If Devayan asks about an idea or task, you can discuss it OR remind them they can run:
   zili idea "..."   to formally process and document an idea
   zili task "..."   to create a structured task with AI context`;
@@ -95,7 +96,7 @@ function callClaude(prompt) {
     });
 
     let stdout = '';
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('Timeout')); }, 60_000);
+    const timer = setTimeout(() => { proc.kill(); reject(new Error('Timed out after 3 minutes')); }, 180_000);
 
     proc.stdout.on('data', d => stdout += d.toString());
     proc.on('close', code => {
@@ -109,6 +110,68 @@ function callClaude(prompt) {
     });
     proc.on('error', reject);
   });
+}
+
+// ─── Animated spinner ─────────────────────────────────────────────────────────
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let spinnerTimer = null;
+let spinnerFrame = 0;
+
+function startSpinner(msg = 'thinking') {
+  spinnerFrame = 0;
+  process.stdout.write('\n');
+  spinnerTimer = setInterval(() => {
+    process.stdout.write(`\r  ${c.magenta}${SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length]}${c.reset}  ${c.gray}zili is ${msg}...${c.reset}`);
+    spinnerFrame++;
+  }, 80);
+}
+
+function stopSpinner() {
+  if (spinnerTimer) {
+    clearInterval(spinnerTimer);
+    spinnerTimer = null;
+  }
+  process.stdout.clearLine(0);
+  process.stdout.cursorTo(0);
+}
+
+// ─── Shell command detection & execution ──────────────────────────────────────
+
+function extractShellCommands(text) {
+  const commands = [];
+  // Match ```bash, ```sh, ```shell, or ``` followed by a shell-like command
+  const fenced = /```(?:bash|sh|shell)?\n([\s\S]*?)```/g;
+  let m;
+  while ((m = fenced.exec(text)) !== null) {
+    const cmd = m[1].trim();
+    if (cmd) commands.push(cmd);
+  }
+  return commands;
+}
+
+async function offerToRunCommands(commands, rl) {
+  for (const cmd of commands) {
+    console.log(paint('cyan', `\n  ┌─ Run this command? ─────────────────────────`));
+    cmd.split('\n').forEach(line => console.log(paint('white', `  │  ${line}`)));
+    console.log(paint('cyan', `  └─────────────────────────────────────────────`));
+
+    const answer = await new Promise(res => {
+      rl.question(paint('yellow', '  Execute? (y/N): ') + c.reset, ans => res(ans.trim().toLowerCase()));
+    });
+
+    if (answer === 'y' || answer === 'yes') {
+      console.log(paint('gray', '\n  Running...\n'));
+      const result = spawnSync('bash', ['-c', cmd], { stdio: 'inherit' });
+      if (result.status === 0) {
+        console.log(paint('green', '\n  ✓ Done.\n'));
+      } else {
+        console.log(paint('yellow', `\n  ⚠ Command exited with code ${result.status}.\n`));
+      }
+    } else {
+      console.log(paint('gray', '  Skipped.\n'));
+    }
+  }
 }
 
 // ─── Display helpers ──────────────────────────────────────────────────────────
@@ -134,16 +197,8 @@ function printHelp() {
     /exit       Exit zili chat
 
   Or just type anything — Zili will respond.
+  Shell commands in responses will be offered for execution.
 `));
-}
-
-function printThinking() {
-  process.stdout.write(paint('gray', '  zili is thinking...'));
-}
-
-function clearThinking() {
-  process.stdout.clearLine(0);
-  process.stdout.cursorTo(0);
 }
 
 function printResponse(text) {
@@ -217,15 +272,21 @@ async function startChat() {
 
     const fullPrompt = `${systemContext}\n\n--- Conversation ---\n${historyText}\n\nZili:`;
 
-    printThinking();
+    startSpinner();
 
     try {
       const response = await callClaude(fullPrompt);
-      clearThinking();
+      stopSpinner();
       history.push({ role: 'assistant', content: response });
       printResponse(response);
+
+      // Offer to run any shell commands in the response
+      const commands = extractShellCommands(response);
+      if (commands.length > 0) {
+        await offerToRunCommands(commands, rl);
+      }
     } catch (err) {
-      clearThinking();
+      stopSpinner();
       console.log(paint('yellow', `\n  ⚠ ${err.message}\n`));
     }
 
@@ -235,6 +296,7 @@ async function startChat() {
   });
 
   rl.on('close', () => {
+    stopSpinner();
     console.log(paint('gray', '\n  See you later.\n'));
     process.exit(0);
   });
