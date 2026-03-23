@@ -1,75 +1,91 @@
-# Zili — AI-powered idea & task workflow
+# Zili — AI workflow + personal assistant
 
-> Drop a `.txt` file. Get a BRD, design doc, structured task, AI context, and a Notion page. Powered by [Claude Code](https://claude.ai/download) — no API key needed.
+> Your personal AI in the terminal. Process ideas into BRDs, turn tasks into structured docs with AI context, and chat about anything. Powered by [Claude Code](https://claude.ai/download) — no API key needed.
 
 ---
 
 ## What is Zili?
 
-Zili is a local workflow tool that turns raw, half-formed ideas and tasks into polished, structured documents using Claude. It watches folders, processes files automatically, and keeps your Notion database and project context files in sync.
+Zili is a local CLI tool that sits between you and Claude. It does two things:
 
-**For ideas:**
-- Evaluates whether an idea is worth pursuing
-- Generates a full BRD + design spec for good ideas
-- Moves weak ideas to a `dumped_ideas/` folder with a clear reason why
+**1. Chatbot** — just type `zili` and talk. It knows your projects, your active tasks, and your context.
 
-**For tasks:**
-- Turns a one-liner into a structured task with acceptance criteria
-- Generates an `ai_context` block — paste it into any AI coding assistant to get instant context
-- Tracks complexity and priority
-
-**Always:**
-- Keeps a `CONTEXT.md` per project — one file to paste into Claude, Cursor, or any AI
-- Keeps a `TASKS.md` per project and a `GLOBAL_TASKS.md` across all projects
-- Syncs everything to Notion (optional)
+**2. Workflow** — drop a raw idea or task as a `.txt` file (or type it directly), and Zili turns it into:
+- A full BRD + design spec (for ideas worth pursuing)
+- A structured task with acceptance criteria and an AI context block
+- A Notion page (optional)
+- An auto-updated `CONTEXT.md` you can paste into any AI coding session
 
 ---
 
 ## Prerequisites
 
-- [Claude Code](https://claude.ai/download) installed (VS Code extension)
+- [Claude Code](https://claude.ai/download) (VS Code or Cursor extension)
 - Node.js 18+
-- A Notion account (optional, for sync)
+- Notion account (optional, for sync)
 
 ---
 
 ## Installation
 
 ```bash
-git clone https://github.com/devayan/zili.git
+git clone https://github.com/ItsDevayan/zili.git
 cd zili
 npm install
-npm run setup    # interactive setup wizard
+npm run setup    # interactive setup — adds your projects
 npm link         # makes 'zili' available globally
+```
+
+If `zili` isn't found after `npm link`, add npm's global bin to your PATH:
+
+```bash
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ---
 
 ## Usage
 
-### From the terminal (fastest)
+### Chat with Zili
 
 ```bash
-zili idea "Add real-time GPS tracking to the fleet dashboard"
-zili task "Implement JWT refresh token rotation in the auth service"
+zili
+```
+
+Just start talking. Zili knows your projects and tasks. Type `/help` inside chat for commands.
+
+### Process an idea
+
+```bash
+zili idea "A smart notification batching system to reduce alert fatigue"
+```
+
+Zili evaluates it. If worth pursuing → generates BRD + design doc + Notion page. If not → explains why and files it as dumped.
+
+### Create a structured task
+
+```bash
+zili task "Add dark mode toggle to the settings page"
+```
+
+Generates a task with: description, acceptance criteria, implementation approach, relevant files, and an **AI context block** you paste into Claude/Cursor to get instant context.
+
+### File watcher (daemon mode)
+
+```bash
+zili start
+```
+
+Then drop `.txt` files into any project's `new_ideas/` or `new_tasks/` folder — Zili processes them automatically.
+
+### Other commands
+
+```bash
 zili status      # see all projects and task counts
-zili context     # regenerate CONTEXT.md and TASKS.md for all projects
+zili context     # regenerate CONTEXT.md + TASKS.md for all projects
+zili add         # add a new project to watch
 ```
-
-### By dropping files (great for daemon mode)
-
-```bash
-zili start       # starts the file watcher
-```
-
-Then drop any `.txt` file into a project's `new_ideas/` or `new_tasks/` folder:
-
-```bash
-echo "A driver fatigue detection feature using the phone camera" \
-  > ~/Desktop/my-project/new_ideas/fatigue-detection.txt
-```
-
-Zili picks it up automatically.
 
 ---
 
@@ -80,12 +96,12 @@ Zili picks it up automatically.
 ```
 my-project/
   polished_ideas/
-    2026-03-23-fatigue-detection/
+    2026-03-23-smart-notifications/
       original.txt     ← your raw input
       idea.md          ← refined description
       brd.md           ← full Business Requirements Document
       design.md        ← system design spec
-      meta.json        ← metadata (title, verdict, timestamp)
+      meta.json
 ```
 
 ### For a task
@@ -93,14 +109,14 @@ my-project/
 ```
 my-project/
   active_tasks/
-    2026-03-23-jwt-refresh-rotation/
+    2026-03-23-dark-mode-toggle/
       original.txt     ← your raw input
       task.md          ← structured task with acceptance criteria
       context.md       ← AI context block (paste into Claude/Cursor)
-      meta.json        ← metadata (complexity, priority, timestamp)
+      meta.json
 ```
 
-### Always generated
+### Always generated (per project)
 
 ```
 my-project/
@@ -108,14 +124,14 @@ my-project/
   TASKS.md             ← current task board (auto-updated)
 
 zili/
-  GLOBAL_TASKS.md      ← tasks across all projects
+  GLOBAL_TASKS.md      ← tasks across all your projects
 ```
 
 ---
 
-## CONTEXT.md — your AI superpower
+## CONTEXT.md — paste this into any AI
 
-Every time you process an idea or task, Zili regenerates `CONTEXT.md` for that project. It looks like this:
+Every time you process an idea or task, Zili regenerates `CONTEXT.md`:
 
 ```markdown
 # My Project — AI Context Document
@@ -123,18 +139,18 @@ Every time you process an idea or task, Zili regenerates `CONTEXT.md` for that p
 > Paste this into any AI coding assistant for instant project context.
 
 ## What is this project?
-A fleet management SaaS with Node.js backend...
+...
 
-## Active Tasks (3)
-### Implement JWT refresh rotation
-- Complexity: M | Priority: high
+## Active Tasks (2)
+### Add dark mode toggle
+- Complexity: S | Priority: medium
 ...
 
 ## Quick AI Prompt Starter
 You are helping me work on "My Project"...
 ```
 
-**Paste this once at the start of any AI session** and the AI immediately understands your project, stack, and current priorities.
+Paste once → any AI immediately understands your project, stack, and priorities.
 
 ---
 
@@ -148,53 +164,50 @@ You are helping me work on "My Project"...
     {
       "name": "My SaaS",
       "path": "~/Desktop/my-saas",
-      "context": "A B2B SaaS with Next.js, Prisma, PostgreSQL. Multi-tenant."
+      "context": "A B2B SaaS with Next.js, Prisma, PostgreSQL. Multi-tenant. Ideas and tasks should fit this stack."
+    },
+    {
+      "name": "Side Project",
+      "path": "~/projects/side-project",
+      "context": "A React Native mobile app. Ideas should be mobile-first."
     }
   ]
 }
 ```
 
-Paths support `~` (home directory). See `config.example.json` for more examples.
+Paths support `~`. See `config.example.json` for more.
 
-### Adding a new project
+### Adding a project later
 
 ```bash
 zili add
 ```
 
-Or manually edit `config.json` and restart `zili start`.
+---
 
-### .env (Notion sync — optional)
+## Notion setup (optional)
+
+1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations) → **New integration**
+2. Copy the token (`ntn_...`)
+3. Create a Notion **Database** page
+4. Open it → `•••` → **Connections** → connect your integration
+5. Copy the database ID from the URL
+6. Add to `.env`:
 
 ```bash
 cp .env.example .env
+# fill in NOTION_TOKEN and NOTION_DATABASE_ID
 ```
 
-Then fill in your Notion token and database ID. See [Notion setup](#notion-setup) below.
+Zili automatically adds `Status`, `Type`, `Project`, `Complexity`, and `Priority` columns.
 
 ---
 
-## Notion setup
-
-1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations)
-2. Click **New integration** → give it a name → **Submit**
-3. Copy the **Internal Integration Token** (starts with `ntn_...`)
-4. In Notion, create a new **Database** page
-5. Open the database → click `•••` → **Connections** → connect your integration
-6. Copy the database ID from the URL (the part between `/` and `?`)
-7. Add both to your `.env` file
-
-Zili will automatically add `Status`, `Type`, `Project`, `Complexity`, and `Priority` columns to your database.
-
----
-
-## Completing a task
-
-When you finish a task, move its folder from `active_tasks/` to `done_tasks/`:
+## Marking a task done
 
 ```bash
-mv my-project/active_tasks/2026-03-23-my-task my-project/done_tasks/
-zili context    # regenerate CONTEXT.md to reflect the update
+mv my-project/active_tasks/2026-03-23-my-task  my-project/done_tasks/
+zili context   # updates CONTEXT.md and TASKS.md
 ```
 
 ---
@@ -202,22 +215,20 @@ zili context    # regenerate CONTEXT.md to reflect the update
 ## How it works
 
 ```
-you drop a .txt
-       ↓
-  zili detects it (chokidar watcher)
-       ↓
-  claude -p "evaluate this..." (your local Claude Code session)
-       ↓
-  structured JSON response
-       ↓
-  saves files locally (polished/ or dumped/ or active_tasks/)
-  regenerates CONTEXT.md + TASKS.md
-  syncs to Notion (if configured)
-       ↓
-  done ✅
+you type: zili idea "..."
+                ↓
+    claude -p (your local Claude Code session)
+                ↓
+    structured JSON evaluation
+                ↓
+    saves BRD + design locally
+    updates CONTEXT.md + TASKS.md
+    syncs to Notion (if configured)
+                ↓
+    done ✅
 ```
 
-No external API calls from Zili itself — it uses the `claude` CLI that's already installed with Claude Code. Your subscription, your quota, no extra keys.
+No external API calls from Zili itself — it uses the `claude` CLI already installed with Claude Code. Your subscription, no extra keys.
 
 ---
 
@@ -226,16 +237,17 @@ No external API calls from Zili itself — it uses the `claude` CLI that's alrea
 ```
 zili/
   bin/
-    zili.js          ← CLI entry point
+    zili.js                  ← CLI entry point
   src/
-    watcher.js       ← file watcher daemon
-    cli.js           ← terminal command handlers
-    processor.js     ← calls claude CLI for ideas + tasks
-    notion.js        ← Notion API integration
-    context-generator.js ← generates CONTEXT.md + TASKS.md
-    config.js        ← loads and resolves config.json
-    setup.js         ← interactive setup wizard
-    add-watch.js     ← add a project interactively
+    chat.js                  ← interactive chatbot
+    watcher.js               ← file watcher daemon
+    cli.js                   ← terminal command handlers
+    processor.js             ← calls claude CLI for ideas + tasks
+    notion.js                ← Notion API integration
+    context-generator.js     ← generates CONTEXT.md + TASKS.md
+    config.js                ← loads and resolves config.json
+    setup.js                 ← interactive setup wizard
+    add-watch.js             ← add a project interactively
   config.example.json
   .env.example
   README.md
@@ -245,10 +257,10 @@ zili/
 
 ## Contributing
 
-Pull requests welcome. Open an issue first for major changes.
+PRs welcome. Open an issue first for major changes.
 
 ---
 
 ## License
 
-MIT
+MIT — made by [Devayan Dewri](https://github.com/ItsDevayan)

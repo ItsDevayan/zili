@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * zili — AI-powered idea & task workflow CLI
+ * zili — AI-powered idea & task workflow + personal chatbot
  *
  * Usage:
+ *   zili                    Start interactive chat with Zili
  *   zili start              Start the file watcher daemon
  *   zili idea "your idea"   Process an idea directly from the terminal
  *   zili task "your task"   Process a task directly from the terminal
@@ -18,9 +19,15 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const command = process.argv[2];
 const rest = process.argv.slice(3).join(' ').trim();
 
-const COMMANDS = ['start', 'idea', 'task', 'add', 'context', 'status', 'help'];
+const COMMANDS = ['start', 'idea', 'task', 'add', 'context', 'status', 'help', 'chat', 'theme'];
 
-if (!command || command === 'help' || command === '--help' || command === '-h') {
+// No command → start chat
+if (!command || command === 'chat') {
+  require('../src/chat').startChat();
+  return;
+}
+
+if (command === 'help' || command === '--help' || command === '-h') {
   printHelp();
   process.exit(0);
 }
@@ -63,28 +70,39 @@ switch (command) {
   case 'status':
     require('../src/cli').showStatus();
     break;
+
+  case 'theme':
+    require('../src/theme').runTheme();
+    break;
 }
 
 function printHelp() {
   console.log(`
   ╔══════════════════════════════════════════════╗
-  ║  zili — AI-powered idea & task workflow      ║
+  ║  zili — AI workflow + personal assistant     ║
   ╚══════════════════════════════════════════════╝
 
-  Commands:
+  Chat:
+    zili                    Start chatting with Zili (default)
+
+  Workflow:
+    zili idea "..."         Process an idea — get BRD + design doc
+    zili task "..."         Create a structured task with AI context
     zili start              Start the file watcher daemon
-    zili idea "..."         Process an idea from the terminal
-    zili task "..."         Create a structured task from the terminal
     zili add                Add a new project to watch
-    zili context            Regenerate CONTEXT.md + TASKS.md for all projects
-    zili status             Show projects and active task counts
+    zili context            Regenerate CONTEXT.md + TASKS.md
+    zili status             Show projects and task counts
+
+  System:
+    zili theme              Beautify your Ubuntu (Dracula, Papirus, fonts, prompt)
     zili help               Show this help
 
   Examples:
-    zili idea "Add real-time GPS tracking to the fleet dashboard"
-    zili task "Implement JWT refresh token rotation in the auth service"
-    zili start              (then drop .txt files into any new_ideas/ or new_tasks/)
+    zili
+    zili idea "A smart notification system for my app"
+    zili task "Add dark mode toggle to the settings page"
+    zili theme
 
-  Docs: https://github.com/devayan/zili
+  Docs: https://github.com/ItsDevayan/zili
 `);
 }
