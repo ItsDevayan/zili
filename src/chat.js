@@ -75,11 +75,12 @@ ${projectList ? `Here are Devayan's current projects:\n\n${projectList}` : ''}
 
 Keep responses concise unless asked for detail. Use plain text — no markdown formatting since this is a terminal.
 
-IMPORTANT — when you need to run shell commands to complete a task:
-- Wrap each command in a triple-backtick code block with "bash" or "sh" language tag
-- After the user runs a command, you will receive the output automatically — use it to continue the task
-- Keep issuing commands until the task is fully complete — do not stop halfway
-- If a command fails, adapt and try a different approach
+IMPORTANT — shell command execution works like this:
+- Wrap commands in triple-backtick bash/sh blocks so they can be executed
+- After execution, you will receive a message starting with "COMMAND RESULTS:" showing exactly what ran and what the output was
+- When you see COMMAND RESULTS, you already have the data — DO NOT ask for the same command again
+- Continue the task using the results you received
+- Keep issuing new commands as needed until the task is fully complete
 
 If Devayan asks about an idea or task, you can discuss it OR remind them they can run:
   zili idea "..."   to formally process and document an idea
@@ -100,8 +101,7 @@ function buildPrompt(systemContext, history) {
     .map(m => {
       if (m.role === 'user') return `Devayan: ${m.content}`;
       if (m.role === 'assistant') return `Zili: ${m.content}`;
-      if (m.role === 'system') return `[System: ${m.content}]`;
-      return m.content;
+      return m.content; // raw — used for COMMAND RESULTS blocks
     })
     .join('\n');
   return `${systemContext}\n\n--- Conversation ---\n${historyText}\n\nZili:`;
@@ -156,7 +156,7 @@ function stopSpinner() {
   process.stdout.cursorTo(0);
 }
 
-// ─── Shell command detection & execution ──────────────────────────────────────
+// ─── Shell command detection ──────────────────────────────────────────────────
 
 function extractShellCommands(text) {
   const commands = [];
@@ -169,49 +169,62 @@ function extractShellCommands(text) {
   return commands;
 }
 
-function askQuestion(rl, question) {
+// ─── Yes/No prompt — uses a fresh rl so it doesn't corrupt the main one ───────
+
+function promptYesNo(question) {
   return new Promise(res => {
-    rl.question(question, ans => res(ans.trim().toLowerCase()));
+    process.stdout.write(question);
+    const tmp = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+    tmp.once('line', line => {
+      tmp.close();
+      const ans = line.trim().toLowerCase();
+      res(ans === 'y' || ans === 'yes');
+    });
   });
 }
 
-// Run commands, capture output, return results for Claude to continue with
-async function runCommands(commands, rl) {
+// ─── Run commands, capture output, return results ─────────────────────────────
+
+async function runCommands(commands, ranBefore) {
   const results = [];
 
   for (const cmd of commands) {
-    console.log(paint('cyan', `\n  ┌─ Run this command? ─────────────────────────`));
-    cmd.split('\n').forEach(line => console.log(paint('white', `  │  ${line}`)));
-    console.log(paint('cyan', `  └─────────────────────────────────────────────`));
+    // Skip if we already ran this exact command (avoid infinite loops)
+    if (ranBefore.has(cmd)) {
+      results.push({ cmd, ran: false, skipped: 'already ran' });
+      continue;
+    }
 
-    const answer = await askQuestion(rl, paint('yellow', '  Execute? (y/N): ') + c.reset);
+    process.stdout.write(paint('cyan', `\n  ┌─ Run this command? ─────────────────────────\n`));
+    cmd.split('\n').forEach(line => process.stdout.write(paint('white', `  │  ${line}\n`)));
+    process.stdout.write(paint('cyan', `  └─────────────────────────────────────────────\n`));
 
-    if (answer === 'y' || answer === 'yes') {
-      console.log(paint('gray', '\n  Running...\n'));
+    const confirmed = await promptYesNo(paint('yellow', '  Execute? (y/N): ') + c.reset);
+
+    if (confirmed) {
+      process.stdout.write(paint('gray', '\n  Running...\n\n'));
+      ranBefore.add(cmd);
 
       const result = spawnSync('bash', ['-c', cmd], {
         stdio: ['inherit', 'pipe', 'pipe'],
         encoding: 'utf-8',
       });
 
-      const stdout = result.stdout || '';
-      const stderr = result.stderr || '';
-      const combined = (stdout + stderr).trim();
+      const combined = ((result.stdout || '') + (result.stderr || '')).trim();
 
-      // Print output for the user to see
       if (combined) {
-        combined.split('\n').forEach(line => console.log(paint('white', `  ${line}`)));
+        combined.split('\n').forEach(line => process.stdout.write(paint('white', `  ${line}\n`)));
       }
 
       if (result.status === 0) {
-        console.log(paint('green', '\n  ✓ Done.\n'));
+        process.stdout.write(paint('green', '\n  ✓ Done.\n\n'));
       } else {
-        console.log(paint('yellow', `\n  ⚠ Exited with code ${result.status}.\n`));
+        process.stdout.write(paint('yellow', `\n  ⚠ Exited with code ${result.status}.\n\n`));
       }
 
       results.push({ cmd, output: combined, exitCode: result.status, ran: true });
     } else {
-      console.log(paint('gray', '  Skipped.\n'));
+      process.stdout.write(paint('gray', '  Skipped.\n\n'));
       results.push({ cmd, ran: false });
     }
   }
@@ -219,38 +232,40 @@ async function runCommands(commands, rl) {
   return results;
 }
 
-// ─── Agentic loop — keep going until Claude has no more commands ──────────────
+// ─── Agentic loop — keeps going until Claude issues no more commands ───────────
 
-async function agenticLoop(initialResponse, history, systemContext, rl) {
+async function agenticLoop(initialResponse, history, systemContext) {
+  const ranBefore = new Set(); // deduplicate commands across rounds
   let response = initialResponse;
 
-  // Up to 10 rounds of command execution before stopping
   for (let round = 0; round < 10; round++) {
     const commands = extractShellCommands(response);
-    if (commands.length === 0) break; // No commands — task complete
+    if (commands.length === 0) break;
 
-    const results = await runCommands(commands, rl);
-    const anyRan = results.some(r => r.ran);
-    if (!anyRan) break; // User skipped everything — stop
+    const results = await runCommands(commands, ranBefore);
+    const ran = results.filter(r => r.ran);
+    if (ran.length === 0) break; // user skipped everything
 
-    // Build a context message with command results
-    const resultSummary = results
-      .filter(r => r.ran)
-      .map(r => `$ ${r.cmd}\n[exit ${r.exitCode}]\n${r.output || '(no output)'}`)
+    // Build a clear result block that Claude can't misread
+    const resultBlock = ran
+      .map(r => `$ ${r.cmd}\n--- output (exit ${r.exitCode}) ---\n${r.output || '(no output)'}`)
       .join('\n\n');
 
-    history.push({ role: 'system', content: `Command results:\n${resultSummary}` });
+    // Push as a raw history entry (not prefixed with Devayan/Zili)
+    history.push({
+      role: 'raw',
+      content: `COMMAND RESULTS:\n${resultBlock}\n\nPlease continue the task using the above output.`,
+    });
 
-    // Ask Claude to continue
     startSpinner('continuing');
     try {
       response = await callClaude(buildPrompt(systemContext, history));
-      stopSpinner();
     } catch (err) {
       stopSpinner();
-      console.log(paint('yellow', `\n  ⚠ ${err.message}\n`));
+      process.stdout.write(paint('yellow', `\n  ⚠ ${err.message}\n\n`));
       break;
     }
+    stopSpinner();
 
     history.push({ role: 'assistant', content: response });
     printResponse(response);
@@ -280,18 +295,17 @@ function printHelp() {
     /exit       Exit zili chat
 
   Or just type anything — Zili will respond.
-  Shell commands in responses will be offered for execution,
-  and Zili will continue the task automatically after each one.
+  Shell commands in responses are offered for execution.
+  Zili continues the task automatically after each one runs.
 `));
 }
 
 function printResponse(text) {
-  const lines = text.split('\n');
-  console.log();
-  lines.forEach(line => {
-    console.log(paint('white', `  ${line}`));
+  process.stdout.write('\n');
+  text.split('\n').forEach(line => {
+    process.stdout.write(paint('white', `  ${line}\n`));
   });
-  console.log();
+  process.stdout.write('\n');
 }
 
 // ─── Main chat loop ───────────────────────────────────────────────────────────
@@ -313,12 +327,13 @@ async function startChat() {
   rl.on('line', async (rawInput) => {
     const input = rawInput.trim();
     rl.pause();
+    process.stdout.write(c.reset);
 
     if (!input) { rl.resume(); rl.prompt(); return; }
 
     // Built-in commands
     if (input === '/exit' || input === '/quit') {
-      console.log(paint('gray', '\n  See you later.\n'));
+      process.stdout.write(paint('gray', '\n  See you later.\n\n'));
       process.exit(0);
     }
     if (input === '/clear') {
@@ -330,7 +345,7 @@ async function startChat() {
       rl.resume(); rl.prompt(); return;
     }
     if (input === '/context') {
-      console.log(paint('cyan', '\n' + systemContext.split('\n').map(l => `  ${l}`).join('\n') + '\n'));
+      process.stdout.write('\n' + systemContext.split('\n').map(l => paint('cyan', `  ${l}`)).join('\n') + '\n\n');
       rl.resume(); rl.prompt(); return;
     }
     if (input === '/tasks') {
@@ -339,15 +354,14 @@ async function startChat() {
         const config = loadConfig();
         config.projects.forEach(p => {
           const tasks = readActiveTasks(p.activeTasksDir);
-          console.log(paint('cyan', `\n  ${p.name} — ${tasks.length} active tasks`));
-          tasks.forEach(t => console.log(paint('gray', `    • ${t.title} [${t.complexity}/${t.priority}]`)));
+          process.stdout.write(paint('cyan', `\n  ${p.name} — ${tasks.length} active tasks\n`));
+          tasks.forEach(t => process.stdout.write(paint('gray', `    • ${t.title} [${t.complexity}/${t.priority}]\n`)));
         });
-        console.log();
+        process.stdout.write('\n');
       } catch (_) {}
       rl.resume(); rl.prompt(); return;
     }
 
-    // Add to history and call Claude
     history.push({ role: 'user', content: input });
 
     startSpinner();
@@ -358,22 +372,21 @@ async function startChat() {
       history.push({ role: 'assistant', content: response });
       printResponse(response);
 
-      // Run agentic loop — handles command execution + follow-up Claude calls
-      await agenticLoop(response, history, systemContext, rl);
+      // Agentic loop: handles commands + Claude follow-ups until task is done
+      await agenticLoop(response, history, systemContext);
 
     } catch (err) {
       stopSpinner();
-      console.log(paint('yellow', `\n  ⚠ ${err.message}\n`));
+      process.stdout.write(paint('yellow', `\n  ⚠ ${err.message}\n\n`));
     }
 
-    process.stdout.write(c.reset);
     rl.resume();
     rl.prompt();
   });
 
   rl.on('close', () => {
     stopSpinner();
-    console.log(paint('gray', '\n  See you later.\n'));
+    process.stdout.write(paint('gray', '\n  See you later.\n\n'));
     process.exit(0);
   });
 }
