@@ -12,6 +12,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const SESSIONS_DIR = path.join(os.homedir(), '.zili', 'sessions');
+
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
 const c = {
@@ -84,7 +86,7 @@ IMPORTANT — shell command execution works like this:
 
 If Devayan asks about an idea or task, you can discuss it OR remind them they can run:
   zili idea "..."   to formally process and document an idea
-  zili task "..."   to create a structured task with AI context`;
+  zili task "..."   to create a structured task with AI context${loadRecentSessions()}`;
 }
 
 function readActiveTasks(activeTasksDir) {
@@ -272,6 +274,60 @@ async function agenticLoop(initialResponse, history, systemContext) {
   }
 }
 
+// ─── Session memory ───────────────────────────────────────────────────────────
+
+function loadRecentSessions() {
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) return '';
+    const files = fs.readdirSync(SESSIONS_DIR)
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .slice(0, 3); // last 3 sessions
+    if (files.length === 0) return '';
+    const summaries = files.map(f => fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf-8')).join('\n\n---\n\n');
+    return `\n\nRECENT SESSION MEMORY (use this to maintain continuity):\n${summaries}`;
+  } catch (_) {
+    return '';
+  }
+}
+
+async function saveSessionSummary(history) {
+  // Only save if there was actual conversation (at least 2 exchanges)
+  const exchanges = history.filter(m => m.role === 'user' || m.role === 'assistant');
+  if (exchanges.length < 2) return;
+
+  const convo = exchanges
+    .map(m => `${m.role === 'user' ? 'Devayan' : 'Zili'}: ${m.content}`)
+    .join('\n');
+
+  const summaryPrompt = `Summarize this Zili chat session in plain text. Include:
+- What the user asked about or worked on
+- What was accomplished or decided
+- Any shell commands run and their purpose/outcome
+- Anything left pending or to follow up on
+- Any preferences or patterns noticed about how the user works
+
+Keep it under 250 words. Write in present/past tense as a session log, not as instructions.
+
+SESSION:
+${convo}`;
+
+  try {
+    const summary = await callClaude(summaryPrompt);
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
+    const now = new Date();
+    const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `${stamp}-session.md`;
+
+    const content = `# Zili Session — ${now.toLocaleString()}\n\n${summary}\n`;
+    fs.writeFileSync(path.join(SESSIONS_DIR, filename), content);
+  } catch (_) {
+    // Silent fail — don't interrupt exit on summary errors
+  }
+}
+
 // ─── Display helpers ──────────────────────────────────────────────────────────
 
 function printBanner() {
@@ -333,7 +389,9 @@ async function startChat() {
 
     // Built-in commands
     if (input === '/exit' || input === '/quit') {
-      process.stdout.write(paint('gray', '\n  See you later.\n\n'));
+      process.stdout.write(paint('gray', '\n  Saving session...\n'));
+      await saveSessionSummary(history);
+      process.stdout.write(paint('gray', '  See you later.\n\n'));
       process.exit(0);
     }
     if (input === '/clear') {
@@ -386,8 +444,11 @@ async function startChat() {
 
   rl.on('close', () => {
     stopSpinner();
-    process.stdout.write(paint('gray', '\n  See you later.\n\n'));
-    process.exit(0);
+    process.stdout.write(paint('gray', '\n  Saving session...\n'));
+    saveSessionSummary(history).finally(() => {
+      process.stdout.write(paint('gray', '  See you later.\n\n'));
+      process.exit(0);
+    });
   });
 }
 
