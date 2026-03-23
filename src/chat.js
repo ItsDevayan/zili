@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// ─── Colors (no extra deps) ───────────────────────────────────────────────────
+// ─── Colors ───────────────────────────────────────────────────────────────────
 
 const c = {
   reset:   '\x1b[0m',
@@ -46,7 +46,7 @@ function findClaude() {
 
 const CLAUDE_BIN = findClaude();
 
-// ─── Build system context from config ────────────────────────────────────────
+// ─── Build system context ─────────────────────────────────────────────────────
 
 function buildSystemContext() {
   let projects = [];
@@ -74,7 +74,13 @@ You also run a local workflow tool (also called Zili) that processes ideas and t
 ${projectList ? `Here are Devayan's current projects:\n\n${projectList}` : ''}
 
 Keep responses concise unless asked for detail. Use plain text — no markdown formatting since this is a terminal.
-When suggesting shell commands, wrap each command in a code block using triple backticks with "bash" or "sh" language tag so they can be detected and offered for execution.
+
+IMPORTANT — when you need to run shell commands to complete a task:
+- Wrap each command in a triple-backtick code block with "bash" or "sh" language tag
+- After the user runs a command, you will receive the output automatically — use it to continue the task
+- Keep issuing commands until the task is fully complete — do not stop halfway
+- If a command fails, adapt and try a different approach
+
 If Devayan asks about an idea or task, you can discuss it OR remind them they can run:
   zili idea "..."   to formally process and document an idea
   zili task "..."   to create a structured task with AI context`;
@@ -85,6 +91,20 @@ function readActiveTasks(activeTasksDir) {
   return fs.readdirSync(activeTasksDir)
     .filter(n => fs.existsSync(path.join(activeTasksDir, n, 'meta.json')))
     .map(n => JSON.parse(fs.readFileSync(path.join(activeTasksDir, n, 'meta.json'), 'utf-8')));
+}
+
+// ─── Build prompt from history ────────────────────────────────────────────────
+
+function buildPrompt(systemContext, history) {
+  const historyText = history.slice(-20)
+    .map(m => {
+      if (m.role === 'user') return `Devayan: ${m.content}`;
+      if (m.role === 'assistant') return `Zili: ${m.content}`;
+      if (m.role === 'system') return `[System: ${m.content}]`;
+      return m.content;
+    })
+    .join('\n');
+  return `${systemContext}\n\n--- Conversation ---\n${historyText}\n\nZili:`;
 }
 
 // ─── Call Claude ──────────────────────────────────────────────────────────────
@@ -140,8 +160,7 @@ function stopSpinner() {
 
 function extractShellCommands(text) {
   const commands = [];
-  // Match ```bash, ```sh, ```shell, or ``` followed by a shell-like command
-  const fenced = /```(?:bash|sh|shell)?\n([\s\S]*?)```/g;
+  const fenced = /```(?:bash|sh|shell)\n([\s\S]*?)```/g;
   let m;
   while ((m = fenced.exec(text)) !== null) {
     const cmd = m[1].trim();
@@ -150,27 +169,91 @@ function extractShellCommands(text) {
   return commands;
 }
 
-async function offerToRunCommands(commands, rl) {
+function askQuestion(rl, question) {
+  return new Promise(res => {
+    rl.question(question, ans => res(ans.trim().toLowerCase()));
+  });
+}
+
+// Run commands, capture output, return results for Claude to continue with
+async function runCommands(commands, rl) {
+  const results = [];
+
   for (const cmd of commands) {
     console.log(paint('cyan', `\n  ┌─ Run this command? ─────────────────────────`));
     cmd.split('\n').forEach(line => console.log(paint('white', `  │  ${line}`)));
     console.log(paint('cyan', `  └─────────────────────────────────────────────`));
 
-    const answer = await new Promise(res => {
-      rl.question(paint('yellow', '  Execute? (y/N): ') + c.reset, ans => res(ans.trim().toLowerCase()));
-    });
+    const answer = await askQuestion(rl, paint('yellow', '  Execute? (y/N): ') + c.reset);
 
     if (answer === 'y' || answer === 'yes') {
       console.log(paint('gray', '\n  Running...\n'));
-      const result = spawnSync('bash', ['-c', cmd], { stdio: 'inherit' });
+
+      const result = spawnSync('bash', ['-c', cmd], {
+        stdio: ['inherit', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      });
+
+      const stdout = result.stdout || '';
+      const stderr = result.stderr || '';
+      const combined = (stdout + stderr).trim();
+
+      // Print output for the user to see
+      if (combined) {
+        combined.split('\n').forEach(line => console.log(paint('white', `  ${line}`)));
+      }
+
       if (result.status === 0) {
         console.log(paint('green', '\n  ✓ Done.\n'));
       } else {
-        console.log(paint('yellow', `\n  ⚠ Command exited with code ${result.status}.\n`));
+        console.log(paint('yellow', `\n  ⚠ Exited with code ${result.status}.\n`));
       }
+
+      results.push({ cmd, output: combined, exitCode: result.status, ran: true });
     } else {
       console.log(paint('gray', '  Skipped.\n'));
+      results.push({ cmd, ran: false });
     }
+  }
+
+  return results;
+}
+
+// ─── Agentic loop — keep going until Claude has no more commands ──────────────
+
+async function agenticLoop(initialResponse, history, systemContext, rl) {
+  let response = initialResponse;
+
+  // Up to 10 rounds of command execution before stopping
+  for (let round = 0; round < 10; round++) {
+    const commands = extractShellCommands(response);
+    if (commands.length === 0) break; // No commands — task complete
+
+    const results = await runCommands(commands, rl);
+    const anyRan = results.some(r => r.ran);
+    if (!anyRan) break; // User skipped everything — stop
+
+    // Build a context message with command results
+    const resultSummary = results
+      .filter(r => r.ran)
+      .map(r => `$ ${r.cmd}\n[exit ${r.exitCode}]\n${r.output || '(no output)'}`)
+      .join('\n\n');
+
+    history.push({ role: 'system', content: `Command results:\n${resultSummary}` });
+
+    // Ask Claude to continue
+    startSpinner('continuing');
+    try {
+      response = await callClaude(buildPrompt(systemContext, history));
+      stopSpinner();
+    } catch (err) {
+      stopSpinner();
+      console.log(paint('yellow', `\n  ⚠ ${err.message}\n`));
+      break;
+    }
+
+    history.push({ role: 'assistant', content: response });
+    printResponse(response);
   }
 }
 
@@ -197,7 +280,8 @@ function printHelp() {
     /exit       Exit zili chat
 
   Or just type anything — Zili will respond.
-  Shell commands in responses will be offered for execution.
+  Shell commands in responses will be offered for execution,
+  and Zili will continue the task automatically after each one.
 `));
 }
 
@@ -216,7 +300,7 @@ async function startChat() {
   printBanner();
 
   const systemContext = buildSystemContext();
-  const history = []; // { role: 'user'|'assistant', content: string }
+  const history = [];
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -263,28 +347,20 @@ async function startChat() {
       rl.resume(); rl.prompt(); return;
     }
 
-    // Build full prompt with history
+    // Add to history and call Claude
     history.push({ role: 'user', content: input });
-
-    const historyText = history.slice(-10) // keep last 10 exchanges
-      .map(m => `${m.role === 'user' ? 'Devayan' : 'Zili'}: ${m.content}`)
-      .join('\n');
-
-    const fullPrompt = `${systemContext}\n\n--- Conversation ---\n${historyText}\n\nZili:`;
 
     startSpinner();
 
     try {
-      const response = await callClaude(fullPrompt);
+      const response = await callClaude(buildPrompt(systemContext, history));
       stopSpinner();
       history.push({ role: 'assistant', content: response });
       printResponse(response);
 
-      // Offer to run any shell commands in the response
-      const commands = extractShellCommands(response);
-      if (commands.length > 0) {
-        await offerToRunCommands(commands, rl);
-      }
+      // Run agentic loop — handles command execution + follow-up Claude calls
+      await agenticLoop(response, history, systemContext, rl);
+
     } catch (err) {
       stopSpinner();
       console.log(paint('yellow', `\n  ⚠ ${err.message}\n`));
