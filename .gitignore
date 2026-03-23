@@ -1,0 +1,14 @@
+node_modules/
+.env
+config.json
+*.log
+
+# Project-specific output folders (not tracked in this repo)
+# Users keep these in their own projects
+polished_ideas/
+dumped_ideas/
+active_tasks/
+done_tasks/
+new_ideas/
+new_tasks/
+GLOBAL_TASKS.md

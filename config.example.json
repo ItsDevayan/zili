@@ -1,0 +1,19 @@
+{
+  "projects": [
+    {
+      "name": "My SaaS",
+      "path": "~/Desktop/my-saas",
+      "context": "A B2B SaaS built with Next.js, Prisma, PostgreSQL. Multi-tenant. Ideas and tasks should fit this stack."
+    },
+    {
+      "name": "Side Project",
+      "path": "~/projects/side-project",
+      "context": "A React Native mobile app for personal finance tracking. Ideas should be mobile-first."
+    },
+    {
+      "name": "General",
+      "path": "~/Desktop/zili",
+      "context": "General ideas not tied to any specific project."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "zili",
+  "version": "1.0.0",
+  "description": "AI-powered idea & task workflow — drop a .txt, get a BRD, design doc, and Notion page. Powered by Claude Code.",
+  "main": "src/watcher.js",
+  "bin": {
+    "zili": "./bin/zili.js"
+  },
+  "scripts": {
+    "start": "node bin/zili.js start",
+    "setup": "node src/setup.js"
+  },
+  "keywords": ["claude", "ai", "productivity", "ideas", "tasks", "notion", "workflow"],
+  "license": "MIT",
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "chokidar": "^3.6.0",
+    "dotenv": "^16.4.5"
+  }
+}
